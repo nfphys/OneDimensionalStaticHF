@@ -6,7 +6,6 @@ using Plots
 using LinearAlgebra
 using Parameters
 using Arpack
-
 using MyLibrary
 
 
@@ -28,8 +27,16 @@ V₀: strength of Yukawa potential [MeV]
 ρ₀: nuclear saturation density [fm⁻³]
 
 σ: areal number density of slab [fm⁻²]
+
+Δz: lattice spacing [fm]
+
+Nz: number of grids
+
+zs: array of grids [fm]
+
+cnvl_coeff: convolution coefficients for Yukawa potential
 """
-@with_kw struct PhysicalParam @deftype Float64
+@with_kw struct PhysicalParam{T} @deftype Float64
     mc² = 938.
     ħc  = 197. 
     
@@ -41,8 +48,13 @@ V₀: strength of Yukawa potential [MeV]
     
     ρ₀ = 0.16 
     σ 
+
+    Δz = 0.1
+    Nz::Int64 = 100
+
+    zs::T = range(Δz/2, (Nz-1/2)*Δz, length=Nz)
     
-    cnvl_coeff::Vector{Float64} = Float64[]
+    cnvl_coeff::Vector{Float64} = calc_cnvl_coeff(Δz, a)
 end
 
 
@@ -54,11 +66,7 @@ Calculate convolution coefficients for Yukawa potential.
     param: My.PhysicalParam
     zs: array of grids in z direction
 """
-function calc_cnvl_coeff(param, zs)
-    Nz = length(zs)
-    Δz = zs[2] - zs[1]
-    
-    @unpack a = param
+function calc_cnvl_coeff(Δz, a)
     Y = Δz/a
     qmax = ceil(Int, 15/Y)
     #@show qmax
@@ -79,19 +87,14 @@ function calc_cnvl_coeff(param, zs)
 end
 export calc_cnvl_coeff
 
-function make_grids(a, N)
-    range(a/2, (N-1/2)*a, length=N)
-end
 
 
 param = PhysicalParam(σ=1.4)
-zs = make_grids(0.1, 100)
-cnvl_coeff = calc_cnvl_coeff(param, zs)
-param = PhysicalParam(param; cnvl_coeff=cnvl_coeff)
+@unpack zs = param
 
 
-function initial_density(param, zs)
-    @unpack a, ρ₀, σ = param
+function initial_density(param)
+    @unpack a, ρ₀, σ, zs = param
     L = σ/ρ₀
     Δz = zs[2] - zs[1]
     
@@ -101,16 +104,16 @@ function initial_density(param, zs)
     return ρ
 end
 
-function test_initial_density(param, zs)
-    @time ρ = initial_density(param, zs)
+function test_initial_density(;σ=1.4)
+    param = PhysicalParam(σ=σ)
+    @time ρ = initial_density(param)
     plot(zs, ρ)
 end
 
 
 
-function calc_potential!(vpot, param, zs, ρ)
-    @unpack mc², ħc, t₀, t₃, a, V₀, cnvl_coeff = param
-    Nz = length(zs)
+function calc_potential!(vpot, param, ρ)
+    @unpack mc², ħc, t₀, t₃, a, V₀, Nz, zs, cnvl_coeff = param
     
     fill!(vpot, 0)
     # t₀ term
@@ -139,11 +142,14 @@ function calc_potential!(vpot, param, zs, ρ)
     return vpot
 end
 
-function test_calc_potential(param, zs)
-    ρ = initial_density(param, zs)
+function test_calc_potential(;σ=1.4)
+    param = PhysicalParam(σ=1.4)
+    @unpack zs = param
+    
+    ρ = initial_density(param)
         
     vpot = similar(zs)
-    @time calc_potential!(vpot, param, zs, ρ)
+    @time calc_potential!(vpot, param, ρ)
         
     plot(zs, vpot)
 end
@@ -596,9 +602,7 @@ function HF_calc_with_imaginary_time_step(
         show=true)
 
     param = PhysicalParam(σ=1.4)
-    zs = make_grids(Δz, Nz)
-    cnvl_coeff = calc_cnvl_coeff(param, zs)
-    param = PhysicalParam(param; cnvl_coeff=cnvl_coeff)
+    @unpack zs = param
 
     ρ₀ = initial_density(param, zs)
     ψs, spEs, Πs = solve_Hamiltonian(param, zs, ρ₀)
