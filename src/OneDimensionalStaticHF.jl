@@ -233,6 +233,7 @@ function show_states(ψs, spEs, Πs)
         println("")
     end
 end
+export show_states
 
 function test_solve_Hamiltonian(;σ=1.4)
     param = PhysicalParam(σ=σ)
@@ -251,8 +252,6 @@ function test_solve_Hamiltonian(;σ=1.4)
     
     return
 end
-
-
 
 
 function func_fermi_energy(Efermi, param, spEs)
@@ -582,9 +581,10 @@ function HF_calc_with_imaginary_time_step(
         Nz=100, 
         Δt=0.1, 
         iter_max=100, 
-        show=true)
+        show=true
+    )
 
-    param = PhysicalParam(σ=σ)
+    param = PhysicalParam(σ=σ, Δz=Δz, Nz=Nz)
     @unpack zs = param
 
     ρ₀ = initial_density(param)
