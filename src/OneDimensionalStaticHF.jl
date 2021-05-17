@@ -141,6 +141,8 @@ function calc_potential!(vpot, param, ρ)
     
     return vpot
 end
+export calc_potential!
+
 
 function test_calc_potential(;σ=1.4)
     param = PhysicalParam(σ=1.4)
@@ -442,12 +444,16 @@ function average_density!(ρ, τ, ρ_new, τ_new)
 end
 
 function HF_calc_with_iterative_diagonalization(
-        ;σ=1.4, 
-        iter_max=10, 
-        show=true, 
-        rtol=1e-5)
+        ;σ=1.4,
+        Δz=0.1, 
+        Nz=100, 
+        Δt=0.1, 
+        iter_max=100, 
+        rtol=1e-5, 
+        show=true
+    )
 
-    param = PhysicalParam(σ=σ)
+    param = PhysicalParam(σ=σ, Δz=Δz, Nz=Nz)
     @unpack zs = param
 
     Etots = Float64[]
@@ -495,8 +501,11 @@ function HF_calc_with_iterative_diagonalization(
         @show Efermi Etot Etot_functional
         show_states(ψs, spEs, Πs)
     end
+
+    return ψs, spEs, Πs, Efermi, ρ, τ
     
 end
+export HF_calc_with_iterative_diagonalization
     
 
 
