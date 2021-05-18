@@ -415,6 +415,7 @@ function calc_total_energy(param, ρ, τ)
     
     E = sum(ε)*2Δz
 end
+export calc_total_energy
 
 function calc_total_energy_functional(param, spEs, Efermi, ρ, τ)
     @unpack mc², ħc, t₀, t₃, a, V₀, Nz, Δz, zs, cnvl_coeff = param
