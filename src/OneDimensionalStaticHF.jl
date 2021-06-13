@@ -15,7 +15,7 @@ using MyLibrary
 
 mc²: proton mass [MeV]
 
-ħc : Planck constant ħ times speed of light c [MeV fm]
+ħc: Planck constant ħ times speed of light c [MeV fm]
 
 t₀: Skyrme parameter [MeV fm⁻³]
 
@@ -58,19 +58,30 @@ cnvl_coeff: convolution coefficients for Yukawa potential
     cnvl_coeff::Vector{Float64} = calc_cnvl_coeff(Δz, a)
 end
 
-
 @with_kw struct Densities 
+    "ρ: number density"
     ρ::Vector{Float64}
+
+    "τ: kinetic density"
     τ::Vector{Float64} = similar(ρ)
 end
 
 
 @with_kw struct SingleParticleStates 
+    "nstates: number of single particle states"
     nstates::Int64
+
+    "spEs: single particle energies [MeV]"
     spEs::Vector{Float64}; @assert length(spEs) === nstates
-    Πs::Vector{Int64}
-    ψs::Matrix{Float64}
-    occ::Vector{Float64}
+
+    "Πs: parities"
+    Πs::Vector{Int64}; @assert length(Πs) === nstates 
+
+    "ψs: wave functions"
+    ψs::Matrix{Float64}; @assert size(ψs, 2) === nstates 
+
+    "occ: occupation numbers"
+    occ::Vector{Float64}; @assert length(occ) === nstates
 end
 
 
@@ -173,19 +184,6 @@ end
 
 
 
-function make_Hamiltonian(param, vpot, Π)
-    @assert Π == 1 || Π == -1
-    @unpack Δz, Nz, zs = param
-    
-    dv = similar(zs)
-    @. dv = 2/Δz^2 + vpot
-    dv[1] += (-1/Δz^2) * Π
-    
-    ev = fill(-1/Δz^2, Nz-1)
-    
-    return SymTridiagonal(dv, ev)
-end
-
 function make_Hamiltonian!(Hmat, param, vpot, Π)
     @assert Π == 1 || Π == -1
     @unpack Δz, Nz, zs = param
@@ -199,19 +197,6 @@ function make_Hamiltonian!(Hmat, param, vpot, Π)
     return 
 end
 
-
-
-function test_make_Hamiltonian(;σ=1.4, Π=1)
-    @assert Π == 1 || Π == -1
-    param = PhysicalParam(σ=σ)
-    @unpack zs = param
-
-    vpot = @. zs^2
-    Hmat = make_Hamiltonian(param, vpot, Π)
-    
-    vals, vecs = eigen(Hmat)
-    vals[1:10] ./ 2
-end
 
 function test_make_Hamiltonian!(;σ=1.4, Π=1)
     @assert Π == 1 || Π == -1
@@ -319,7 +304,6 @@ function test_initial_states(;σ=1.4, Efermi=-20)
     @time states = initial_states!(vpot, Hmat, param, dens)
     @time sort_states!(states)
     @time calc_occ!(states, param, Efermi)
-    show_states(states)
     
     @unpack nstates, ψs = states 
     p = plot()
@@ -327,6 +311,8 @@ function test_initial_states(;σ=1.4, Efermi=-20)
         plot!(p, zs, @views @. abs2(ψs[:,i]))
     end
     display(p)
+
+    show_states(states)
     
     return
 end
@@ -529,80 +515,6 @@ function calc_total_energy2(param, dens, states)
     return E 
 end
 
-#=
-function average_density!(dens, dens_new)
-    @unpack ρ, τ = dens 
-    @unpack ρ_new, τ_new = dens_new 
-
-    @. ρ = (ρ + ρ_new)/2
-    @. τ = (τ + τ_new)/2
-    return
-end
-
-function HF_calc_with_iterative_diagonalization(
-        ;σ=1.4,
-        Δz=0.1, 
-        Nz=100, 
-        Δt=0.1, 
-        iter_max=100, 
-        rtol=1e-5, 
-        show=true
-    )
-
-    param = PhysicalParam(σ=σ, Δz=Δz, Nz=Nz)
-    @unpack zs = param
-
-    Etots = Float64[]
-    
-    dens = initial_density(param)
-    
-    ρ_new = similar(zs)
-    τ_new = similar(zs)
-    dens_new = Densities(ρ=ρ_new, τ=τ_new)
-    
-    ψs, spEs, Πs = solve_Hamiltonian(param, ρ)
-    ψs, spEs, Πs = sort_states(ψs, spEs, Πs)
-    
-    Efermi = calc_fermi_energy(param, spEs)
-    calc_density!(ρ, τ, param, ψs, spEs, Πs, Efermi)
-    push!(Etots, calc_total_energy(param, ρ, τ))
-    
-    for iter in 1:iter_max
-        ψs, spEs, Πs = solve_Hamiltonian(param, ρ)
-        ψs, spEs, Πs = sort_states(ψs, spEs, Πs)
-        
-        Efermi = calc_fermi_energy(param, spEs)
-        calc_density!(ρ_new, τ_new, param, ψs, spEs, Πs, Efermi)
-        average_density!(ρ, τ, ρ_new, τ_new)
-        push!(Etots, calc_total_energy(param, ρ, τ))
-        
-        if iter > 1 && abs((Etots[end] - Etots[end-1])/Etots[end]) < rtol
-            converge = true
-            println("iteration converged at iter = $iter")
-            break
-        end
-    end
-    
-    if show
-        p = plot()
-        plot!(p, zs, ρ)
-        plot!(p, zs, τ)
-        display(p)
-
-        p = plot(Etots)
-        display(p)
-        
-        Etot = Etots[end]
-        Etot_functional = calc_total_energy_functional(param, spEs, Efermi, ρ, τ)
-        @show Efermi Etot Etot_functional
-        show_states(ψs, spEs, Πs)
-    end
-
-    return ψs, spEs, Πs, Efermi, ρ, τ
-    
-end
-export HF_calc_with_iterative_diagonalization
-=#
 
 
 
@@ -617,69 +529,6 @@ function calc_sp_energy(param, Hmat, ψ)
 end
 
 
-#=
-function imaginary_time_evolution!(ψs, spEs, Πs, param
-        ;Δt=0.1, 
-        iter_max=20, 
-        rtol=1e-5, 
-        show=true)
-
-    @unpack Nz, Δz, zs = param
-    nstates = size(ψs, 2)
-    
-    Etots = Float64[] # history of total energy
-
-    ρ = similar(zs)
-    τ = similar(zs)
-    vpot = similar(zs)
-    
-    converge = false
-    for iter in 1:iter_max
-        Efermi = calc_fermi_energy(param, spEs)
-        calc_density!(ρ, τ, param, ψs, spEs, Πs, Efermi)
-        push!(Etots, calc_total_energy(param, ρ, τ))
-        
-        calc_potential!(vpot, param, ρ) 
-        
-        for i in 1:nstates
-            Hmat = make_Hamiltonian(param, vpot, Πs[i])
-            
-            @views ψs[:,i] = (I - 0.5Δt*Hmat)*ψs[:,i]
-            @views ψs[:,i] = (I + 0.5Δt*Hmat)\ψs[:,i]
-            
-            # gram schmidt orthogonalization
-            for j in 1:i-1
-                if Πs[i] ≢ Πs[j]
-                    continue
-                end
-                
-                @views ψs[:,i] .-= ψs[:,j].*(dot(ψs[:,j],ψs[:,i])*2Δz)
-            end
-            
-            # normalization
-            @views ψs[:,i] ./= calc_norm(zs, ψs[:,i])
-            
-            @views spEs[i] = calc_sp_energy(param, Hmat, ψs[:,i])
-        end
-        
-        ψs, spEs, Πs = sort_states(ψs, spEs, Πs)
-        
-        if iter > 1 && abs((Etots[end] - Etots[end-1])/Etots[end]) < rtol
-            converge = true
-            if show
-                println("\n iteration converged at iter = $iter \n")
-            end
-            break
-        end
-    end
-    
-    if !converge
-        println("no convergence")
-    end
-    
-    return ρ, τ, Etots
-end
-=#
 
 
 
@@ -689,7 +538,7 @@ function HF_calc_with_imaginary_time_step(
         Nz=100, 
         Δt=0.1, 
         iter_max=100, 
-        show=true
+        show_result=true
     )
 
     param = PhysicalParam(σ=σ, Δz=Δz, Nz=Nz)
@@ -709,8 +558,6 @@ function HF_calc_with_imaginary_time_step(
     Efermi = calc_fermi_energy(param, states)
     calc_occ!(states, param, Efermi)
 
-    #show_states(states)
-
     calc_density!(dψ, dens, param, states)
 
     @unpack nstates, spEs, Πs, ψs, occ = states 
@@ -724,6 +571,7 @@ function HF_calc_with_imaginary_time_step(
             @views ψs[:,i] = (I - 0.5Δt*Hmat)*ψs[:,i]
             @views ψs[:,i] = (I + 0.5Δt*Hmat)\ψs[:,i]
 
+            # gram schmidt orthogonalization
             for j in 1:i-1 
                 if Πs[i] !== Πs[j] continue end 
 
@@ -739,7 +587,7 @@ function HF_calc_with_imaginary_time_step(
         calc_density!(dψ, dens, param, states)
     end
 
-    if show
+    if show_result
         @show calc_fermi_energy(param, states)
         @show calc_total_energy(param, dens)
         @show calc_total_energy2(param, dens, states)
