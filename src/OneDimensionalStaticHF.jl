@@ -216,7 +216,7 @@ end
 
 
 
-function initial_states!(vpot, Hmat, param, dens; Emax=0, nstates_max=100)
+function initial_states!(vpot, Hmat, param, dens; Emax=0, nstates_max=10)
     @unpack Δz, Nz, zs, ħc, mc² = param
     
     ψs = zeros(Float64, Nz, nstates_max) # wave function
@@ -229,14 +229,16 @@ function initial_states!(vpot, Hmat, param, dens; Emax=0, nstates_max=100)
         calc_potential!(vpot, param, dens)
         make_Hamiltonian!(Hmat, param, vpot, Π)
         
+        #vals, vecs = eigs(Hmat; nev=nstates_max, which=:SM)
         vals, vecs = eigen(Hmat)
         
         # normalization
         @. vals *= ħc^2/2mc²
         @. vecs /= sqrt(2Δz)
         
-        N = length(vals[vals .< Emax])
-        @views for i in 1:N
+        #N = length(vals[vals .< Emax])
+        @views for i in 1:nstates_max 
+            if vals[i] > Emax continue end
             istate += 1
             ψs[:,istate] = vecs[:,i]
             spEs[istate] = vals[i]
@@ -557,6 +559,7 @@ function HF_calc_with_imaginary_time_step(param; Δt=0.1, iter_max=100, show_res
 
     @unpack nstates, spEs, Πs, ψs, occ = states 
 
+    converge = false
     for iter in 1:iter_max 
         calc_potential!(vpot, param, dens) 
 
@@ -583,11 +586,16 @@ function HF_calc_with_imaginary_time_step(param; Δt=0.1, iter_max=100, show_res
 
         push!(Etots, calc_total_energy(param, dens))
         if iter > 1 && isapprox(Etots[end], Etots[end-1], rtol=1e-5)
+            converge = true
             if show_result
                 println("iteration converged at iter = $(iter).")
             end
             break
         end
+    end
+
+    if !converge 
+        error("no convergence in imaginary time step.")
     end
 
     if show_result
@@ -625,8 +633,8 @@ function slab_mass_table(;σs=0.1:0.1:2.5, Δz=0.1, Nz=100, nstates_max=10)
         end
     end
 
-    p = plot(xlabel="Nucleons / fm²", ylabel="E [MeV]", ylim=(-60,-1), legend=false)
-    plot!(p, σs, Etots; label="Etot", color=:black)
+    p = plot(xlabel="Nucleons / fm²", ylabel="E [MeV]", ylim=(-50,-1), legend=false)
+    plot!(p, σs, Etots; color=:black)
     plot!(p, σs, Efermis; label="Efermi")
     for istate in 1:nstates_max 
         plot!(p, σs, spEs[:,istate]; label="e$(istate)", color=:blue)
