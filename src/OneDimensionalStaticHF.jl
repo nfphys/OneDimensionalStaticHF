@@ -532,19 +532,14 @@ end
 
 
 
-function HF_calc_with_imaginary_time_step(
-        ;σ=1.4,
-        Δz=0.1, 
-        Nz=100, 
-        Δt=0.1, 
-        iter_max=100, 
-        show_result=true
-    )
+function HF_calc_with_imaginary_time_step(param; Δt=0.1, iter_max=100, show_result=false)
 
-    param = PhysicalParam(σ=σ, Δz=Δz, Nz=Nz)
-    @unpack zs = param
+    #param = PhysicalParam(σ=σ, Δz=Δz, Nz=Nz)
+    @unpack zs, Nz, Δz = param
 
-    @time dens = initial_density(param)
+    Etots = Float64[]
+
+    dens = initial_density(param)
 
     vpot = zeros(Float64, Nz)
     dv   = zeros(Float64, Nz)
@@ -562,7 +557,7 @@ function HF_calc_with_imaginary_time_step(
 
     @unpack nstates, spEs, Πs, ψs, occ = states 
 
-    @time for iter in 1:iter_max 
+    for iter in 1:iter_max 
         calc_potential!(vpot, param, dens) 
 
         for i in 1:nstates 
@@ -585,9 +580,18 @@ function HF_calc_with_imaginary_time_step(
         Efermi = calc_fermi_energy(param, states)
         calc_occ!(states, param, Efermi)
         calc_density!(dψ, dens, param, states)
+
+        push!(Etots, calc_total_energy(param, dens))
+        if iter > 1 && isapprox(Etots[end], Etots[end-1], rtol=1e-5)
+            if show_result
+                println("iteration converged at iter = $(iter).")
+            end
+            break
+        end
     end
 
     if show_result
+        println("")
         @show calc_fermi_energy(param, states)
         @show calc_total_energy(param, dens)
         @show calc_total_energy2(param, dens, states)
@@ -603,6 +607,34 @@ end
 export HF_calc_with_imaginary_time_step
 
 
+
+function slab_mass_table(;σs=0.1:0.1:2.5, Δz=0.1, Nz=100, nstates_max=10)
+    nσ = length(σs)
+    Etots = zeros(Float64, nσ)
+    Efermis = zeros(Float64, nσ)
+    spEs = zeros(Float64, nσ, nstates_max)
+    for iσ in 1:nσ 
+        param = PhysicalParam(σ=σs[iσ], Δz=Δz, Nz=Nz)
+        states, dens = HF_calc_with_imaginary_time_step(param)
+        Etots[iσ] = calc_total_energy(param, dens)
+        Efermis[iσ] = calc_fermi_energy(param, states)
+
+        @unpack nstates = states 
+        for istate in 1:min(nstates, nstates_max) 
+            spEs[iσ,istate] = states.spEs[istate]
+        end
+    end
+
+    p = plot(xlabel="Nucleons / fm²", ylabel="E [MeV]", ylim=(-60,-1), legend=false)
+    plot!(p, σs, Etots; label="Etot", color=:black)
+    plot!(p, σs, Efermis; label="Efermi")
+    for istate in 1:nstates_max 
+        plot!(p, σs, spEs[:,istate]; label="e$(istate)", color=:blue)
+    end
+    display(p)
+
+    return
+end
 
 
 end # module
