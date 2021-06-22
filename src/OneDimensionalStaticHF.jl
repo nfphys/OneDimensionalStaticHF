@@ -1,11 +1,12 @@
 module OneDimensionalStaticHF
 
-export calc_cnvl_coeff, calc_potential!, HF_calc_with_imaginary_time_step
+export calc_cnvl_coeff, HF_calc_with_imaginary_time_step
 
 using Plots
 using LinearAlgebra
 using Parameters
 using Arpack
+using SparseArrays
 using MyLibrary
 
 
@@ -50,7 +51,7 @@ cnvl_coeff: convolution coefficients for Yukawa potential
     σ = 1.4
 
     Δz = 0.1
-    Nz::Int64 = 100
+    Nz::Int64 = 200
 
     zs::T = range(Δz/2, (Nz-1/2)*Δz, length=Nz)
     
@@ -134,7 +135,7 @@ function test_initial_density(;σ=1.4)
 end
 
 
-
+#=
 function calc_potential!(vpot, param, dens)
     @unpack mc², ħc, t₀, t₃, a, V₀, Nz, zs, cnvl_coeff = param
     @unpack ρ = dens
@@ -163,7 +164,7 @@ function calc_potential!(vpot, param, dens)
     # normalization
     @. vpot *= (2mc²/ħc^2)
     
-    return vpot
+    return 
 end
 
 
@@ -210,9 +211,163 @@ function test_make_Hamiltonian!(;σ=1.4, Π=1)
     vals, vecs = eigen(Hmat)
     vals[1:10] ./ 2
 end
+=#
 
 
 
+@inline function second_deriv_coeff(i, j, a, N, Π) 
+    d = 0.0 
+    if i === 1
+        d += ifelse(j===3, -1/12, 0)
+        d += ifelse(j===2,   4/3 + Π*(-1/12), 0)
+        d += ifelse(j===1,  -5/2 + Π*(4/3), 0)
+    elseif i === 2
+        d += ifelse(j===4, -1/12, 0)
+        d += ifelse(j===3, 4/3, 0)
+        d += ifelse(j===2, -5/2, 0)
+        d += ifelse(j===1, 4/3 + Π*(-1/12), 0)
+    elseif i === N-1
+        d += ifelse(j===N, 4/3, 0)
+        d += ifelse(j===N-1, -5/2, 0)
+        d += ifelse(j===N-2, 4/3, 0)
+        d += ifelse(j===N-3, -1/12, 0)
+    elseif i === N 
+        d += ifelse(j===N, -5/2, 0)
+        d += ifelse(j===N-1, 4/3, 0)
+        d += ifelse(j===N-2, -1/12, 0)
+    else
+        d += ifelse(j===i+2, -1/12, 0)
+        d += ifelse(j===i+1, 4/3, 0)
+        d += ifelse(j===i, -5/2, 0)
+        d += ifelse(j===i-1, 4/3, 0)
+        d += ifelse(j===i-2, -1/12, 0)
+    end
+    d /= a*a 
+    return d 
+end
+
+function make_Hamiltonian!(Hmat, param, vpot, Π)
+    @unpack Nz, Δz, zs = param
+
+    fill!(Hmat, 0)
+    for iz in 1:Nz
+        Hmat[iz,iz] += vpot[iz]
+
+        for dz in -2:2
+            jz = iz + dz 
+
+            if !(1 ≤ jz ≤ Nz) continue end 
+            Hmat[iz,jz] += -second_deriv_coeff(iz, jz, Δz, Nz, Π)
+        end
+    end
+
+    return Hmat
+end
+
+
+
+
+
+function test_make_Hamiltonian!(;σ=1.4, Π=1)
+    @assert Π == 1 || Π == -1
+    param = PhysicalParam(σ=σ)
+    @unpack zs, Nz = param
+
+    vpot = @. zs^2
+    
+    Hmat = spzeros(Float64, Nz, Nz)
+    @time make_Hamiltonian!(Hmat, param, vpot, Π)
+    
+    vals, vecs = eigs(Hmat, nev=5, which=:SM)
+    vals ./ 2
+end
+
+
+function make_Laplacian!(Lmat, param, a)
+    @unpack Nz, Δz, zs = param
+
+    fill!(Lmat, 0)
+    for iz in 1:Nz
+        Lmat[iz,iz] += 1/(a*a)
+        for dz in -2:2
+            jz = iz + dz 
+
+            if !(1 ≤ jz ≤ Nz) continue end 
+            Lmat[iz,jz] += -second_deriv_coeff(iz, jz, Δz, Nz, 1)
+        end
+    end
+
+    return Lmat
+end
+
+
+function test_make_Laplacian!(; a=0)
+    param = PhysicalParam()
+    @unpack zs, Nz = param
+
+    Lmat = spzeros(Float64, Nz, Nz)
+    @time make_Laplacian!(Lmat, param, a)
+
+    ρ = zeros(Float64, Nz)
+    @. ρ = (1 - zs^2)*exp(-zs^2/2)
+    
+    ϕ_exact = zeros(Float64, Nz)
+    @. ϕ_exact = exp(-zs^2/2)
+    #@. ϕ_exact -= ϕ_exact[end]
+
+    ϕ = zeros(Float64, Nz)
+    ϕ = Lmat\ρ
+
+    plot(zs, ϕ)
+    plot!(zs, ϕ_exact)
+end
+
+
+function calc_potential!(vpot, param, dens, Lmat)
+    @unpack mc², ħc, t₀, t₃, a, V₀, Nz, zs = param
+    @unpack ρ = dens
+    
+    fill!(vpot, 0)
+    # t₀ term
+    @. vpot += (3/4)*t₀*ρ
+    
+    # t₃ term
+    @. vpot += (3/16)*t₃*ρ*ρ
+    
+    # yukawa term
+    vpot .+= (V₀*a*4π).*(Lmat\ρ)
+    
+    # normalization
+    @. vpot *= (2mc²/ħc^2)
+    
+    return 
+end
+
+
+function test_calc_potential(;σ=1.4, Δz=0.1, Nz=200)
+    param = PhysicalParam(σ=1.4, Δz=Δz, Nz=Nz)
+    @unpack zs, Nz = param
+
+    Lmat = spzeros(Float64, Nz, Nz)
+    make_Laplacian!(Lmat, param, param.a)
+
+    dens = initial_density(param)
+
+    #=
+    vpot1 = similar(zs)
+    calc_potential!(vpot1, param, dens)
+    =#
+        
+    vpot2 = similar(zs)
+    @time calc_potential!(vpot2, param, dens, Lmat)
+        
+    p = plot(;yticks=-2.5:0.1:0)
+    #plot!(zs, vpot1)
+    plot!(zs, vpot2)
+end
+
+
+#=
 function initial_states!(vpot, Hmat, param, dens; Emax=0, nstates_max=10)
     @unpack Δz, Nz, zs, ħc, mc² = param
     
@@ -253,6 +408,7 @@ function initial_states!(vpot, Hmat, param, dens; Emax=0, nstates_max=10)
     
     return states
 end
+=#
 
 
 function sort_states!(states)
@@ -287,6 +443,8 @@ function show_states(states)
     end
 end
 
+
+#=
 function test_initial_states(;σ=1.4, Efermi=-20)
     param = PhysicalParam(σ=σ)
     @unpack zs, Nz = param
@@ -314,8 +472,80 @@ function test_initial_states(;σ=1.4, Efermi=-20)
     
     return
 end
+=#
 
 
+
+function initial_states!(vpot, Hmat, param, dens, Lmat; Emax=0, nstates_max=50)
+    @unpack Δz, Nz, zs, ħc, mc² = param
+    
+    ψs = zeros(Float64, Nz, nstates_max) # wave function
+    spEs = zeros(Float64, nstates_max) # single particle energy
+    Πs = zeros(Int64, nstates_max) 
+    occ = zeros(Float64, nstates_max)
+    
+    istate = 0
+    for Π in 1:-2:-1
+        calc_potential!(vpot, param, dens, Lmat)
+        make_Hamiltonian!(Hmat, param, vpot, Π)
+        
+        vals, vecs = eigs(Hmat; nev=nstates_max, which=:SM)
+        #vals, vecs = eigen(Hmat)
+        
+        # normalization
+        @. vals *= ħc^2/2mc²
+        @. vecs /= sqrt(2Δz)
+        
+        #N = length(vals[vals .< Emax])
+        @views for i in 1:nstates_max 
+            if vals[i] > Emax continue end
+            istate += 1
+            ψs[:,istate] = vecs[:,i]
+            spEs[istate] = vals[i]
+            Πs[istate] = Π
+        end
+    end
+
+    states = SingleParticleStates(
+        nstates=istate,
+        spEs=spEs[1:istate],
+        Πs=Πs[1:istate],
+        ψs=ψs[:,1:istate],
+        occ=occ[1:istate]
+    )
+    
+    return states
+end
+
+
+function test_initial_states(;σ=1.4, Efermi=-20)
+    param = PhysicalParam(σ=σ)
+    @unpack zs, Nz = param
+
+    dens = initial_density(param)
+
+    vpot = similar(zs)
+
+    Hmat = spzeros(Float64, Nz, Nz)
+
+    Lmat = spzeros(Float64, Nz, Nz)
+    make_Laplacian!(Lmat, param, param.a)
+
+    @time states = initial_states!(vpot, Hmat, param, dens, Lmat)
+    @time sort_states!(states)
+    @time calc_occ!(states, param, Efermi)
+    
+    @unpack nstates, ψs = states 
+    p = plot()
+    for i in 1:nstates
+        plot!(p, zs, @views @. abs2(ψs[:,i]))
+    end
+    display(p)
+
+    show_states(states)
+    
+    return
+end
 
 
 
@@ -355,6 +585,7 @@ function calc_fermi_energy(param, states; ΔE=0.5)
     return Efermi
 end
 
+#=
 function test_calc_fermi_energy(σ=1.4)
     param = PhysicalParam(σ=σ)
     @unpack zs, Nz = param
@@ -368,6 +599,29 @@ function test_calc_fermi_energy(σ=1.4)
     Hmat = SymTridiagonal(dv, ev)
 
     states = initial_states!(vpot, Hmat, param, dens)
+    sort_states!(states)
+    
+    @time Efermi = calc_fermi_energy(param, states)
+    @show Efermi func_fermi_energy(Efermi, param, states)
+    show_states(states)
+end
+=#
+
+
+function test_calc_fermi_energy(σ=1.4)
+    param = PhysicalParam(σ=σ)
+    @unpack zs, Nz = param
+
+    dens = initial_density(param)
+
+    vpot = similar(zs)
+
+    Hmat = spzeros(Float64, Nz, Nz)
+
+    Lmat = spzeros(Float64, Nz, Nz)
+    make_Laplacian!(Lmat, param, param.a)
+
+    states = initial_states!(vpot, Hmat, param, dens, Lmat)
     sort_states!(states)
     
     @time Efermi = calc_fermi_energy(param, states)
@@ -435,11 +689,12 @@ function test_calc_density!()
 
     vpot = similar(zs)
 
-    dv = zeros(Float64, Nz)
-    ev = zeros(Float64, Nz-1)
-    Hmat = SymTridiagonal(dv, ev)
+    Hmat = spzeros(Float64, Nz, Nz)
+
+    Lmat = spzeros(Float64, Nz, Nz)
+    make_Laplacian!(Lmat, param, param.a)
     
-    states = initial_states!(vpot, Hmat, param, dens)
+    states = initial_states!(vpot, Hmat, param, dens, Lmat)
     sort_states!(states)
     
     Efermi = calc_fermi_energy(param, states)
@@ -458,7 +713,7 @@ end
     
 
 
-
+#=
 function calc_total_energy(param, dens)
     @unpack mc², ħc, t₀, t₃, a, V₀, Nz, Δz, zs, cnvl_coeff = param
     @unpack ρ, τ = dens 
@@ -490,8 +745,30 @@ function calc_total_energy(param, dens)
     
     E = sum(ε)*2Δz
 end
+=#
 
-function calc_total_energy2(param, dens, states)
+function calc_total_energy(param, dens, Lmat)
+    @unpack mc², ħc, t₀, t₃, a, V₀, Nz, Δz, zs, cnvl_coeff = param
+    @unpack ρ, τ = dens 
+    
+    ε = zeros(Float64, Nz)
+    
+    # kinetic term
+    @. ε += ħc^2/2mc²*τ
+    
+    # t₀ term
+    @. ε += (3/8)*t₀*ρ^2
+    
+    # t₃ term
+    @. ε += (1/16)*t₃*ρ^3
+    
+    # yukawa term
+    ε .+= (V₀*a*2π).*ρ.*(Lmat\ρ)
+    
+    E = sum(ε)*2Δz
+end
+
+function calc_total_energy_with_spEs(param, dens, states)
     @unpack mc², ħc, t₀, t₃, a, V₀, Nz, Δz, zs, cnvl_coeff = param
     @unpack ρ, τ = dens 
     @unpack nstates, spEs, occ = states
@@ -528,7 +805,7 @@ end
 
 
 
-
+#=
 function HF_calc_with_imaginary_time_step(;σ=1.4, Δz=0.1, Nz=100, Δt=0.1, iter_max=100, show_result=false)
 
     param = PhysicalParam(σ=σ, Δz=Δz, Nz=Nz)
@@ -608,6 +885,89 @@ function HF_calc_with_imaginary_time_step(;σ=1.4, Δz=0.1, Nz=100, Δt=0.1, ite
 
     return states, dens
 end
+=#
+
+
+function HF_calc_with_imaginary_time_step(;σ=1.4, Δz=0.1, Nz=100, Δt=0.1, iter_max=100, show_result=false)
+
+    param = PhysicalParam(σ=σ, Δz=Δz, Nz=Nz)
+    @unpack zs, Nz, Δz = param
+
+    Etots = Float64[]
+
+    dens = initial_density(param)
+
+    vpot = zeros(Float64, Nz)
+    dψ   = zeros(Float64, Nz)
+    Hmat = spzeros(Float64, Nz, Nz)
+
+    Lmat = spzeros(Float64, Nz, Nz)
+    make_Laplacian!(Lmat, param, param.a)
+    
+    states = initial_states!(vpot, Hmat, param, dens, Lmat)
+    sort_states!(states)
+    
+    Efermi = calc_fermi_energy(param, states)
+    calc_occ!(states, param, Efermi)
+
+    calc_density!(dψ, dens, param, states)
+
+    @unpack nstates, spEs, Πs, ψs, occ = states 
+
+    converge = false
+    for iter in 1:iter_max 
+        calc_potential!(vpot, param, dens, Lmat) 
+
+        for i in 1:nstates 
+            make_Hamiltonian!(Hmat, param, vpot, Πs[i])
+
+            @views ψs[:,i] = (I - 0.5Δt*Hmat)*ψs[:,i]
+            @views ψs[:,i] = (I + 0.5Δt*Hmat)\ψs[:,i]
+
+            # gram schmidt orthogonalization
+            for j in 1:i-1 
+                if Πs[i] !== Πs[j] continue end 
+
+                @views ψs[:,i] .-= ψs[:,j] .* (dot(ψs[:,j], ψs[:,i])*2Δz)
+            end
+            @views ψs[:,i] ./= calc_norm(param, ψs[:,i])
+            @views spEs[i] = calc_sp_energy(param, Hmat, ψs[:,i])
+        end
+
+        sort_states!(states)
+        Efermi = calc_fermi_energy(param, states)
+        calc_occ!(states, param, Efermi)
+        calc_density!(dψ, dens, param, states)
+
+        push!(Etots, calc_total_energy(param, dens, Lmat))
+        if iter > 1 && isapprox(Etots[end], Etots[end-1], rtol=1e-5)
+            converge = true
+            if show_result
+                println("iteration converged at iter = $(iter).")
+            end
+            break
+        end 
+    end
+
+    if !converge 
+        error("no convergence in imaginary time step.")
+    end
+
+    if show_result
+        println("")
+        @show calc_fermi_energy(param, states)
+        @show calc_total_energy(param, dens, Lmat)
+        @show calc_total_energy_with_spEs(param, dens, states)
+        show_states(states)
+
+        p = plot()
+        plot!(p, zs, dens.ρ; label="ρ")
+        plot!(p, zs, dens.τ; label="τ")
+        display(p)
+    end
+
+    return states, dens
+end
 
 
 
@@ -618,10 +978,13 @@ function slab_mass_table(;σs=0.1:0.1:2.5, Δz=0.1, Nz=100, nstates_max=10)
     Efermis = zeros(Float64, nσ)
     spEs = zeros(Float64, nσ, nstates_max)
 
+    Lmat = spzeros(Float64, Nz, Nz)
+    make_Laplacian!(Lmat, param, param.a)
+
     for iσ in 1:nσ 
         param = PhysicalParam(σ=σs[iσ], Δz=Δz, Nz=Nz)
         states, dens = HF_calc_with_imaginary_time_step(σ=σs[iσ], Δz=Δz, Nz=Nz)
-        Etots[iσ] = calc_total_energy(param, dens)
+        Etots[iσ] = calc_total_energy(param, dens, Lmat)
         Efermis[iσ] = calc_fermi_energy(param, states)
 
         @unpack nstates = states 
@@ -654,6 +1017,8 @@ function slab_mass_table(;σs=0.1:0.1:2.5, Δz=0.1, Nz=100, nstates_max=10)
 
     return 
 end
+
+
 
 
 end # module
