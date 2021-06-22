@@ -1,7 +1,6 @@
 module OneDimensionalStaticHF
 
-using Base: Int64, vect
-greet() = print("Hello World!")
+export calc_cnvl_coeff, calc_potential!, HF_calc_with_imaginary_time_step
 
 using Plots
 using LinearAlgebra
@@ -110,7 +109,6 @@ function calc_cnvl_coeff(Δz, a)
     
     return cnvl_coeff
 end
-export calc_cnvl_coeff
 
 
 
@@ -167,7 +165,6 @@ function calc_potential!(vpot, param, dens)
     
     return vpot
 end
-export calc_potential!
 
 
 function test_calc_potential(;σ=1.4)
@@ -289,7 +286,6 @@ function show_states(states)
         println("")
     end
 end
-export show_states
 
 function test_initial_states(;σ=1.4, Efermi=-20)
     param = PhysicalParam(σ=σ)
@@ -494,7 +490,6 @@ function calc_total_energy(param, dens)
     
     E = sum(ε)*2Δz
 end
-export calc_total_energy
 
 function calc_total_energy2(param, dens, states)
     @unpack mc², ħc, t₀, t₃, a, V₀, Nz, Δz, zs, cnvl_coeff = param
@@ -534,9 +529,9 @@ end
 
 
 
-function HF_calc_with_imaginary_time_step(param; Δt=0.1, iter_max=100, show_result=false)
+function HF_calc_with_imaginary_time_step(;σ=1.4, Δz=0.1, Nz=100, Δt=0.1, iter_max=100, show_result=false)
 
-    #param = PhysicalParam(σ=σ, Δz=Δz, Nz=Nz)
+    param = PhysicalParam(σ=σ, Δz=Δz, Nz=Nz)
     @unpack zs, Nz, Δz = param
 
     Etots = Float64[]
@@ -606,13 +601,14 @@ function HF_calc_with_imaginary_time_step(param; Δt=0.1, iter_max=100, show_res
         show_states(states)
 
         p = plot()
-        plot!(p, dens.ρ)
+        plot!(p, zs, dens.ρ; label="ρ")
+        plot!(p, zs, dens.τ; label="τ")
         display(p)
     end
 
     return states, dens
 end
-export HF_calc_with_imaginary_time_step
+
 
 
 
@@ -621,27 +617,42 @@ function slab_mass_table(;σs=0.1:0.1:2.5, Δz=0.1, Nz=100, nstates_max=10)
     Etots = zeros(Float64, nσ)
     Efermis = zeros(Float64, nσ)
     spEs = zeros(Float64, nσ, nstates_max)
+
     for iσ in 1:nσ 
         param = PhysicalParam(σ=σs[iσ], Δz=Δz, Nz=Nz)
-        states, dens = HF_calc_with_imaginary_time_step(param)
+        states, dens = HF_calc_with_imaginary_time_step(σ=σs[iσ], Δz=Δz, Nz=Nz)
         Etots[iσ] = calc_total_energy(param, dens)
         Efermis[iσ] = calc_fermi_energy(param, states)
 
         @unpack nstates = states 
-        for istate in 1:min(nstates, nstates_max) 
-            spEs[iσ,istate] = states.spEs[istate]
+        for istate in 1:nstates_max
+            if istate <= nstates
+                spEs[iσ,istate] = states.spEs[istate]
+            else
+                spEs[iσ,istate] = 0.0
+            end
         end
     end
 
-    p = plot(xlabel="Nucleons / fm²", ylabel="E [MeV]", ylim=(-50,-1), legend=false)
-    plot!(p, σs, Etots; color=:black)
-    plot!(p, σs, Efermis; label="Efermi")
+    p = plot(xlabel="Nucleons / fm²", ylabel="E [MeV]", ylim=(-50,-1))
+    #plot!(p, σs, Etots; color=:black, linestyle=:dot, linewidth=2, label="E/Ω")
+    plot!(p, σs, Efermis; color=:black, linestyle=:dash, label="ε_F")
     for istate in 1:nstates_max 
-        plot!(p, σs, spEs[:,istate]; label="e$(istate)", color=:blue)
+        if istate == 1
+            plot!(p, σs, spEs[:,istate]; color=:black, label="e_n")
+        else
+            plot!(p, σs, spEs[:,istate]; color=:black, label=false)
+        end
     end
+    savefig("./1dimTDHF_figure/slab_mass_table_spEs")
     display(p)
 
-    return
+    p2 = plot(xlabel="Nucleons / fm²", ylabel="E/Ω [MeV / fm²]")
+    plot!(p2, σs, Etots; color=:black, st=:scatter, label="E/Ω", ylim=(-50,0))
+    savefig("./1dimTDHF_figure/slab_mass_table_Etot")
+    display(p2)
+
+    return 
 end
 
 
