@@ -901,8 +901,9 @@ function HF_calc_with_imaginary_time_step(;σ=1.4, Δz=0.1, Nz=100, Δt=0.1, ite
     dψ   = zeros(Float64, Nz)
     Hmat = spzeros(Float64, Nz, Nz)
 
-    Lmat = spzeros(Float64, Nz, Nz)
-    make_Laplacian!(Lmat, param, param.a)
+    Lmat_ = spzeros(Float64, Nz, Nz)
+    make_Laplacian!(Lmat_, param, param.a)
+    Lmat  = factorize(Lmat_)
     
     states = initial_states!(vpot, Hmat, param, dens, Lmat)
     sort_states!(states)
